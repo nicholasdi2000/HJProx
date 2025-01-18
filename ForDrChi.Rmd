@@ -114,7 +114,7 @@ fused_lasso_admm <- function(y, X, lambda1, lambda2, rho = 1,
   
   return(beta)
 }
-
+ 1+1
 
 beta_hat <- fused_lasso_admm(y, X, 0.25, 2.75, rho = 1)
 plot_data <- data.frame(
