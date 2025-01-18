@@ -41,6 +41,7 @@ compute_prox <- function(x, t, f, delta = 1e-1, int_samples = 100, alpha = 1.0,
 
 Fused Lasso Problem Set Up, Solved with ADMM: 
 
+For this problem, we are simuling 100 points 
 ```{r}
 n <- 100
 D <- matrix(0, nrow = n - 1, ncol = n)
