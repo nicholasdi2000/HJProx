@@ -1,0 +1,265 @@
+---
+title: "Code For Dr Chi"
+output: html_document
+date: "2025-01-17"
+---
+Define HJ-Prox: 
+
+```{r}
+compute_prox <- function(x, t, f, delta = 1e-1, int_samples = 100, alpha = 1.0, 
+                         linesearch_iters = 0) {
+  if (is.vector(x)) x <- matrix(x, ncol = 1)
+  if (ncol(x) != 1) stop("x must be a column vector")
+  if (nrow(x) < 1) stop("x must have at least one row")
+
+  linesearch_iters <- linesearch_iters + 1
+  
+  standard_dev <- sqrt(delta * t / alpha)
+  dim <- nrow(x)
+  
+  y <- matrix(rnorm(int_samples * dim, mean = as.numeric(x), sd = standard_dev), 
+              nrow = int_samples, ncol = dim, byrow = TRUE)
+  f_y <- apply(y, 1, f) 
+
+  z <- -f_y * (alpha / delta)
+  exp_z <- exp(z - max(z)) 
+  w <- exp_z / sum(exp_z) 
+  
+  if (any(is.infinite(w))) {
+    alpha <- alpha * 0.5
+    return(compute_prox(x, t, f, delta = delta, int_samples = int_samples, 
+                        alpha = alpha, linesearch_iters = linesearch_iters))
+  }
+  
+  prox_term <- colSums(w * y) / sum(w)
+  prox_term <- matrix(prox_term, nrow = dim, ncol = 1)
+  
+  if (any(is.infinite(prox_term))) stop("Prox Overflowed")
+  return(prox_term)
+}
+```
+
+Fused Lasso Problem Set Up, Solved with ADMM: 
+
+```{r}
+n <- 100
+D <- matrix(0, nrow = n - 1, ncol = n)
+for (i in 1:(n - 1)) {
+  D[i, i]   <- -1
+  D[i, i+1] <- 1
+}
+
+fused_lasso_penalty <- function(beta, D, lambda1, lambda2) {
+  penalty <- lambda2 * sum(abs(D %*% beta)) + lambda1 * sum(abs(beta))
+  return(penalty)
+}
+
+set.seed(123)
+X <- diag(n)
+obj_values <- c()
+
+
+
+true_signal <- c(rep(-3,15),rep(4,20),rep(-2,30),rep(5,35))
+y <- true_signal + rnorm(n, sd = 2)
+
+fused_lasso_admm <- function(y, X, lambda1, lambda2, rho = 1, 
+                             max_iter = 1000, tol = 1e-50) {
+  n <- length(y)
+  p <- ncol(X)
+  
+  beta <- rep(0, p)   
+  z    <- rep(0, p-1) 
+  u    <- rep(0, p-1) 
+  v    <- rep(0, p)  
+  w    <- rep(0, p)   
+  
+
+  XtX <- t(X) %*% X
+  Xty <- t(X) %*% y
+  
+  D <- diag(p-1)
+  D <- cbind(D, 0) - cbind(0, D)
+  
+
+  A <- XtX + rho * diag(p) + rho * t(D) %*% D
+  for (iter in 1:max_iter) {
+    v_old <- v
+    z_old <- z
+    rhs <- Xty + rho * (v - w) + rho * t(D) %*% (z - u)
+    beta <- solve(A) %*% (rhs) #First One 
+    v <- sign(beta+w)*pmax(abs(beta+w) - lambda1/rho,0) #Second One 
+    Dbeta <- D %*% beta
+    z <- sign(Dbeta + u)*pmax(abs(Dbeta + u) - lambda2/rho, 0) #Third Update
+    w <- w + (beta - v)
+    u <- u + (Dbeta - z)
+    
+    r_norm <- sqrt(sum((beta - v)^2) + sum((Dbeta - z)^2))
+    s_norm <- sqrt(sum((v - v_old)^2) + sum((z - z_old)^2)) * rho
+    
+    residuals <- y - X%*%beta
+    objective_value <- 0.5 * sum(residuals^2) + fused_lasso_penalty(beta, D, 
+                                                                    lambda1, 
+                                                                    lambda2)
+
+    obj_values[iter] <<- objective_value
+      
+  
+    if (r_norm < tol && s_norm < tol) {
+      cat("Converged at iteration", iter, "\n")
+      break
+    }
+  }
+  
+  return(beta)
+}
+
+
+beta_hat <- fused_lasso_admm(y, X, 0.25, 2.75, rho = 1)
+plot_data <- data.frame(
+  x = seq(n),
+  true_signal = true_signal,
+  beta_hat = beta_hat,
+  observed_y = y)
+
+# Create the plot using ggplot2
+ggplot(plot_data, aes(x = x)) +
+  geom_line(aes(y = true_signal, color = "True Signal"), size = 1.2, alpha = 0.5) +
+  geom_point(aes(y = beta_hat, color = "Estimated Signal"), size = 0.5, alpha = 1.1) +
+  geom_point(aes(y = observed_y, color = "Observed Data"), alpha = 0.5) +
+  scale_color_manual(
+    values = c(
+      "True Signal" = "black",         # Change "True Signal" to blue
+      "beta_hat_naive" = "green",    # Change "beta_hat_naive" to green
+      "Estimated Signal" = "red",    # Change "Estimated Signal" to red
+      "Observed Data" = "grey"     # Change "Observed Data" to purple
+    )
+  ) +
+  labs(title = "True Signal vs Estimated Signal vs Observed Data",
+       x = "Index",
+       y = "Value",
+       color = "Legend") +
+  theme_minimal()
+```
+
+```{r}
+set.seed(123)
+
+XTX <- t(X) %*% X
+XTy <- t(X) %*% y
+
+# Parameters
+lambda1 <- 0.25
+lambda2 <- 2.75
+step = 0.001
+int_samples = 10000
+delta = 0.001
+alpha = 1
+threshold = 1e-16
+t = 1.5
+
+D <- matrix(0, nrow = n - 1, ncol = n)
+for (i in 1:(n - 1)) {
+  D[i, i] <- -1
+  D[i, i + 1] <- 1
+}
+
+fused_lasso_penalty <- function(x) {
+  penalty <- lambda2*sum(abs(D%*%x)) + lambda1*sum(abs(x))
+  return(penalty)
+}
+
+current_beta <- rep(0, n)
+obj_values <- c()
+diff_vector <- c()
+curr_obj <- Inf
+########################################################################
+fused_lasso_penalty_pt1 <- function(x) {
+  penalty <- lambda2*sum(abs(D%*%x)) 
+  return(penalty)
+}
+fused_lasso_penalty_pt2 <- function(x) {
+  penalty <- lambda1*sum(abs(x))
+  return(penalty)
+}
+step = 0.000001
+
+for (i in 1:10000) {
+  # print(i)
+  f_gradient <- XTX %*% current_beta - XTy
+  x_tilde <- current_beta - step * f_gradient
+  new_beta_pt_1 <- compute_prox(x_tilde, lambda2*step, fused_lasso_penalty_pt1, 
+                           delta, int_samples,alpha)
+  new_beta <- compute_prox(new_beta_pt_1, lambda1*step, fused_lasso_penalty_pt2, 
+                           delta, int_samples,alpha)
+ 
+  residuals <- y - X %*% new_beta
+  fused_pen <- lambda1 * sum(abs(new_beta)) + lambda2 * sum(abs(D %*% new_beta))
+  new_obj <- 0.5 * sum(residuals^2) + fused_pen
+  
+  obj_values[i] <- new_obj
+  cat("Iteration:", i, "Objective:", new_obj, "\n")
+
+   if(sum(abs(current_beta-new_beta)) < threshold){
+    print(paste0("Finished at Iteration:",i))
+    break
+  }
+    current_beta <- as.vector(new_beta)
+    curr_obj <- new_obj
+    delta = delta
+    step = step * 0.99
+}
+####################################################################################
+for (i in 1:10000) {
+  # print(i)
+  f_gradient <- XTX %*% current_beta - XTy
+  x_tilde <- current_beta - step * f_gradient
+  new_beta <- compute_prox(x_tilde, t*step, fused_lasso_penalty, 
+                           delta, int_samples,alpha)
+ 
+  residuals <- y - X %*% new_beta
+  fused_pen <- lambda1 * sum(abs(new_beta)) + lambda2 * sum(abs(D %*% new_beta))
+  new_obj <- 0.5 * sum(residuals^2) + fused_pen
+  
+  obj_values[i] <- new_obj
+  cat("Iteration:", i, "Objective:", new_obj, "\n")
+
+   if(sum(abs(current_beta-new_beta)) < threshold){
+    print(paste0("Finished at Iteration:",i))
+    break
+  }
+    current_beta <- as.vector(new_beta)
+    curr_obj <- new_obj
+    delta = delta
+    step = step * 0.95
+}
+
+
+plot_data <- data.frame(
+  x = seq(n),
+  true_signal = true_signal,
+  beta_hat = beta_hat,
+  prox_hat = current_beta,
+  observed_y = y)
+
+ggplot(plot_data, aes(x = x)) +
+  geom_line(aes(y = true_signal, color = "True Signal"), size = 0.25, alpha = 1) +
+  geom_point(aes(y = beta_hat, color = "Estimated Signal"), size = 0.5, alpha = 1.1) +
+  geom_point(aes(y = prox_hat, color = "Prox Estimated Signal"), size = 0.5, alpha = 1.1) +
+
+  geom_point(aes(y = observed_y, color = "Observed Data"), alpha = 0.5) +
+  scale_color_manual(
+    values = c(
+      "True Signal" = "black",       
+      "Prox Estimated Signal" = "blue",   
+      "Estimated Signal" = "red",    
+      "Observed Data" = "grey"     
+    )
+  ) +
+  labs(title = "True Signal vs Estimated Signal vs Observed Data",
+       x = "Index",
+       y = "Value",
+       color = "Legend") +
+  theme_minimal()
+```
+
